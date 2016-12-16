@@ -3,7 +3,7 @@ module Main where
 import Options.Applicative
 import Data.Semigroup ((<>))
 
-import Crypto.Cipher.RC4 (initialize, combine)
+import Crypto.Cipher.RC4 (initialize, combine, State)
 
 import qualified Data.ByteString as BS
 import Data.ByteString.Char8 (pack, unpack)
@@ -11,7 +11,7 @@ import Data.ByteString.Base16 (decode, encode)
 import Data.Char (ord, chr)
 import Data.List (isInfixOf, isPrefixOf, isSuffixOf)
 import Data.Maybe (fromJust, isNothing)
-import Control.Monad (when)
+import Control.Monad (when, replicateM)
 
 data Parameters = Parameters
   { ciphertext :: String
@@ -39,9 +39,6 @@ parameters = Parameters
        <> short 'l'
        <> help "Key length in bits.")
 
-keys :: [BS.ByteString]
-keys = [ pack $ map chr [i, j, k] | i <- [0 .. 255], j <- [0 .. 255], k <- [0 .. 255] ]
-
 -- Printable ASCII: 20 to 7E / 00 to 7F (32 to 126 / 0 to 127)
 isPrintable :: Char -> Bool
 isPrintable c = ord c >= 32 && ord c <= 126
@@ -52,43 +49,54 @@ asciiOrGTFO chars = if isPrintable `all` chars then Just chars else Nothing
 encrypt :: BS.ByteString -> BS.ByteString -> String
 encrypt text key = unpack . snd $ combine (initialize key) text
 
-contains :: Maybe String -> String -> String -> Bool
-contains haystack needle location
-    | isNothing haystack   = False
-    | location == "prefix" = needle `isPrefixOf` fromJust haystack
-    | location == "suffix" = needle `isSuffixOf` fromJust haystack
-    | otherwise            = needle `isInfixOf`  fromJust haystack
+encrypt' :: BS.ByteString -> BS.ByteString -> Maybe String
+encrypt' text key = applyContext (initialize key) text 0
 
---
---
---
---
+applyContext :: State -> BS.ByteString -> Int -> Maybe String
+applyContext state bytes pos
+    | encPrintable = if pos+1 == BS.length bytes then Just . unpack $ newBytes else applyContext newState newBytes (pos+1)
+    | otherwise    = Nothing
+    where (newState, encrypted) = combine state (BS.take 1 (BS.drop pos bytes))
+          encByte = BS.index encrypted 0
+          encPrintable = encByte >= 32 && encByte <= 126
+          newBytes = BS.concat [BS.take pos bytes, encrypted, BS.drop (pos+1) bytes]
+
+contains :: String -> String -> Maybe String -> Bool
+contains needle location maybeHaystack
+    | isNothing maybeHaystack = False
+    | location == "prefix"    = needle `isPrefixOf` haystack
+    | location == "suffix"    = needle `isSuffixOf` haystack
+    | otherwise               = needle `isInfixOf`  haystack
+    where haystack = fromJust maybeHaystack
+
+iterKeys :: Int -> [String]
+iterKeys len = replicateM (len `div` 8) (map chr [0..255])
 
 searchKeys :: Parameters -> IO ()
-searchKeys (Parameters ctext kn pos _) = mapM_ (printIfMatches ctext kn pos) keys
+searchKeys (Parameters ctext kn pos bitlen) =
+    let bsctext = fst . decode $ pack ctext
+        ptcheck = contains kn pos
+    in  mapM_ (printIfMatches bsctext ptcheck) (iterKeys bitlen)
+-- in  putStrLn . unpack . encode . pack $ (encrypt (pack "string") (pack "KEY")) -- normal encryption
+-- in  putStrLn $ (encrypt (fst . decode $ pack "e6148e3dd8e8") (pack "KEY")) -- decrypts to "string"
+-- in  putStrLn . fromJust $ (encrypt2 (fst . decode $ pack "e6148e3dd8e8") (pack "KEY")) -- decrypts to "string"
 
-printIfMatches :: String -> String -> String -> BS.ByteString -> IO ()
-printIfMatches ct pt pos key = let { decrypted = (asciiOrGTFO . encrypt (fst . decode $ pack ct)) key } in
-                        when (contains decrypted pt pos)
-                             (putStrLn $ (fromJust decrypted) ++ " (key: " ++ (unpack . encode $ key) ++ ")")
-
--- Real example:
--- known = "Key="
--- ciphertext = "C75AABD33B29FD21BB84C35E"
--- keys = [ pack $ map chr [i, j, k, l] | i <- [0 .. 255], j <- [0 .. 255], k <- [0 .. 255], l <- [0 .. 255] ]
---
+printIfMatches :: BS.ByteString -> (Maybe String -> Bool) -> String -> IO ()
+printIfMatches ct check keystr =
+    let key = pack keystr
+        decrypted = encrypt' ct key
+        -- decrypted = (asciiOrGTFO . encrypt (fst . decode $ ct)) key
+    in  when (check decrypted)
+        (putStrLn $ (fromJust decrypted) ++ " (key: " ++ (unpack . encode $ key) ++ ")")
 
 -- Easy example:
--- (key: KEY [75, 69, 89]) + (plain: string) = e6148e3dd8e8
---known' = "st"
---position' = "prefix"
---ciphertext' = "E6148E3DD8E8"
---
+-- "st" "prefix" "E6148E3DD8E8" 24
+-- Real example:
+-- "Key=" "prefix" "C75AABD33B29FD21BB84C35E" 32
 
 -- TODO: docs
--- TODO: fix the MISSING message
+-- TODO: fix the MISSING message (better CLI)
 -- TODO: build with Stack
--- TODO: keylen
 
 main :: IO ()
 main = execParser opts >>= searchKeys
