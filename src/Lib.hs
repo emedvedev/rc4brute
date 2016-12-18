@@ -1,14 +1,14 @@
 module Lib where
 
-import Crypto.Cipher.RC4 (initialize, combine, State)
+import           Control.Monad          (replicateM, when)
+import qualified Data.ByteString        as BS
+import           Data.ByteString.Base16 (encode)
+import           Data.ByteString.Char8  (pack, unpack)
+import           Data.Char              (chr, ord)
+import           Data.List              (isInfixOf, isPrefixOf, isSuffixOf)
+import           Data.Maybe             (fromJust, isNothing)
 
-import qualified Data.ByteString as BS
-import Data.ByteString.Base16 (encode)
-import Data.ByteString.Char8 (pack, unpack)
-import Data.Char (ord, chr)
-import Data.List (isInfixOf, isPrefixOf, isSuffixOf)
-import Data.Maybe (fromJust, isNothing)
-import Control.Monad (when, replicateM)
+import           Crypto.Cipher.RC4      (State, combine, initialize)
 
 -- Printable ASCII: 20 to 7E / 00 to 7F (32 to 126 / 0 to 127)
 isPrintable :: Char -> Bool
@@ -49,7 +49,7 @@ printIfMatches ct check keystr =
         decrypted = encrypt' ct key
         -- decrypted = (asciiOrGTFO . encrypt (fst . decode $ ct)) key
     in  when (check decrypted)
-        (putStrLn $ (fromJust decrypted) ++ " (key: " ++ (unpack . encode $ key) ++ ")")
+        (putStrLn $ fromJust decrypted ++ " (key: " ++ (unpack . encode $ key) ++ ")")
 
 -- Easy example:
 -- "st" "prefix" "E6148E3DD8E8" 24
@@ -58,5 +58,4 @@ printIfMatches ct check keystr =
 
 -- TODO: docs
 -- TODO: fix the MISSING message (better CLI)
--- TODO: build with Stack
--- TODO: funcs
+-- TODO: perf / refactor
