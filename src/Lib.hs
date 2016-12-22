@@ -1,6 +1,7 @@
 module Lib where
 
 import           Control.Monad          (replicateM, when)
+import           Crypto.Cipher.RC4      (State, combine, initialize)
 import qualified Data.ByteString        as BS
 import           Data.ByteString.Base16 (encode)
 import           Data.ByteString.Char8  (pack, unpack)
@@ -8,25 +9,18 @@ import           Data.Char              (chr, ord)
 import           Data.List              (isInfixOf, isPrefixOf, isSuffixOf)
 import           Data.Maybe             (fromJust, isNothing)
 
-import           Crypto.Cipher.RC4      (State, combine, initialize)
-
--- Printable ASCII: 20 to 7E / 00 to 7F (32 to 126 / 0 to 127)
+-- Printable ASCII: 20 to 7E (32 to 126)
 isPrintable :: Char -> Bool
 isPrintable c = ord c >= 32 && ord c <= 126
-
-asciiOrGTFO :: String -> Maybe String
-asciiOrGTFO chars = if isPrintable `all` chars then Just chars else Nothing
-
-encrypt :: BS.ByteString -> BS.ByteString -> String
-encrypt text key = unpack . snd $ combine (initialize key) text
 
 encrypt' :: BS.ByteString -> BS.ByteString -> Maybe String
 encrypt' text key = applyContext (initialize key) text 0
 
 applyContext :: State -> BS.ByteString -> Int -> Maybe String
 applyContext state bytes pos
-    | encPrintable = if pos+1 == BS.length bytes then Just . unpack $ newBytes else applyContext newState newBytes (pos+1)
-    | otherwise    = Nothing
+    | encPrintable && pos+1 == BS.length bytes = Just . unpack $ newBytes
+    | encPrintable                             = applyContext newState newBytes (pos+1)
+    | otherwise                                = Nothing
     where (newState, encrypted) = combine state (BS.take 1 (BS.drop pos bytes))
           encByte = BS.index encrypted 0
           encPrintable = encByte >= 32 && encByte <= 126
